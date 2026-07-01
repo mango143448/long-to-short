@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import sys
 import tempfile
+from pathlib import Path
 from typing import Optional
 
 from src.types import TranscriptSegment
@@ -97,17 +100,6 @@ def parse_pasted_transcript(raw: str) -> list[TranscriptSegment]:
     return segments
 
 
-def _find_subtitle_track(info: dict) -> Optional[dict]:
-    for key in ["subtitles", "automatic_captions"]:
-        subs = info.get(key, {})
-        for lang in _LANG_PRIORITY:
-            if lang in subs:
-                for fmt in subs[lang]:
-                    if fmt.get("ext") == "vtt" and fmt.get("url"):
-                        return fmt
-    return None
-
-
 def _parse_vtt_content(vtt_text: str) -> list[TranscriptSegment]:
     import webvtt
 
@@ -130,11 +122,20 @@ def _parse_vtt_content(vtt_text: str) -> list[TranscriptSegment]:
 
 def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:
     import yt_dlp
-    import requests
+
+    tmp_dir = tempfile.mkdtemp(prefix="subs_")
+    out_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
 
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitlesformat": "vtt",
+        "subtitleslangs": ["en"],
+        "skip_download": True,
+        "outtmpl": out_template,
+        "socket_timeout": 30,
         "extract_flat": False,
     }
     if cookies_path:
@@ -144,21 +145,25 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            ydl.download([url])
 
-        track = _find_subtitle_track(info)
-        if not track:
-            return []
+        vtt_files = sorted(Path(tmp_dir).glob("*.vtt"))
+        if vtt_files:
+            vtt_content = vtt_files[0].read_text(encoding="utf-8")
+            segments = _parse_vtt_content(vtt_content)
+            if segments:
+                return segments
 
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        resp = requests.get(track["url"], headers=headers, timeout=30)
-        if resp.status_code != 200:
-            return []
-
-        return _parse_vtt_content(resp.text)
-
-    except Exception:
         return []
+
+    except yt_dlp.utils.DownloadError as e:
+        print(f"[transcript] yt-dlp download error for {video_id}: {e}", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"[transcript] yt-dlp unexpected error for {video_id}: {e}", file=sys.stderr)
+        return []
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def fetch_transcript(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:

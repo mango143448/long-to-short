@@ -2,7 +2,7 @@
 # Install with: pip install -r requirements.txt
 
 # \u2500\u2500 Core UI \u2500\u2500
-streamlit>=1.40.0
+streamlit==1.40.0
 
 # \u2500\u2500 AI / LLM \u2500\u2500
 langchain>=0.3.0

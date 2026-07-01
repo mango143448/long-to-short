@@ -1,3 +1,5 @@
+import time as _time
+
 import streamlit as st
 
 from src.session import init_defaults, sync_live_to_session
@@ -39,7 +41,11 @@ if active_url:
     if advance_if_done(active_url):
         st.rerun()
     else:
-        st.rerun()
+        last_poll = st.session_state.get("_last_poll", 0.0)
+        now = _time.time()
+        if now - last_poll >= 2.0:
+            st.session_state["_last_poll"] = now
+            st.rerun()
 
 results = st.session_state.get("results", {})
 has_any_result = bool(results) and any(
