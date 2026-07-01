@@ -139,6 +139,7 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
         "extract_flat": False,
         "extractor_retries": 3,
         "file_access_retries": 3,
+        "legacy_server_connect": True,
     }
     if cookies_path:
         ydl_opts["cookiefile"] = cookies_path
@@ -155,16 +156,11 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
             segments = _parse_vtt_content(vtt_content)
             if segments:
                 return segments
-
         return []
 
     except yt_dlp.utils.DownloadError as e:
         err_str = str(e)
         print(f"[transcript] yt-dlp error for {video_id}: {err_str[:200]}", file=sys.stderr)
-
-        if "SSL" in err_str or "UNEXPECTED_EOF" in err_str:
-            return _fetch_transcript_yt_dlp_fallback(video_id, cookies_path)
-
         return []
     except Exception as e:
         print(f"[transcript] yt-dlp unexpected error for {video_id}: {e}", file=sys.stderr)
@@ -173,60 +169,70 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _fetch_transcript_yt_dlp_fallback(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:
-    """Fallback that patches SSL context for HF Spaces environments."""
-    import ssl
+def _fetch_youtubetranscript_direct(video_id: str, lang: str = "en") -> list[TranscriptSegment]:
+    """Fetch transcript via youtubetranscript.com — different infrastructure, not blocked by YouTube's CDN."""
+    import requests
 
-    import yt_dlp
+    urls = [
+        f"https://youtubetranscript.com/?v={video_id}&lang={lang}",
+        f"https://youtubetranscript.com/?v={video_id}",
+    ]
 
-    original_context = ssl._create_default_https_context
-    ssl._create_default_https_context = ssl._create_unverified_context
+    for url in urls:
+        for attempt in range(3):
+            try:
+                resp = requests.get(
+                    url,
+                    timeout=15,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and data:
+                        segments = []
+                        for item in data:
+                            text = item.get("text", "").strip()
+                            start = float(item.get("start", 0))
+                            dur = float(item.get("dur", item.get("duration", 0)))
+                            if text:
+                                segments.append(TranscriptSegment(text=text, start=start, duration=max(0.1, dur)))
+                        if segments:
+                            return segments
+                return []
+            except requests.RequestException as e:
+                if attempt < 2:
+                    continue
+                print(f"[transcript] direct HTTP failed for {video_id}: {e}", file=sys.stderr)
+                return []
+    return []
 
-    tmp_dir = tempfile.mkdtemp(prefix="subs_")
-    out_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
 
-    ydl_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "writesubtitles": True,
-        "writeautomaticsub": True,
-        "subtitlesformat": "vtt",
-        "subtitleslangs": ["en"],
-        "skip_download": True,
-        "outtmpl": out_template,
-        "socket_timeout": 30,
-        "extract_flat": False,
-        "extractor_retries": 3,
-        "file_access_retries": 3,
-    }
-    if cookies_path:
-        ydl_opts["cookiefile"] = cookies_path
-
-    url = f"https://www.youtube.com/watch?v={video_id}"
-
+def _try_pyopenssl():
+    """Inject pyopenssl into urllib3 if available — uses system OpenSSL instead of Python's built-in SSL."""
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
-        vtt_files = sorted(Path(tmp_dir).glob("*.vtt"))
-        if vtt_files:
-            vtt_content = vtt_files[0].read_text(encoding="utf-8")
-            segments = _parse_vtt_content(vtt_content)
-            if segments:
-                return segments
-        return []
-    except Exception as e:
-        print(f"[transcript] fallback also failed for {video_id}: {e}", file=sys.stderr)
-        return []
-    finally:
-        ssl._create_default_https_context = original_context
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        import urllib3.contrib.pyopenssl
+        urllib3.contrib.pyopenssl.inject_into_urllib3()
+        return True
+    except Exception:
+        return False
 
 
 def fetch_transcript(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:
+    # Tier 1: yt-dlp subtitle download (works locally and on non-blocked networks)
     result = fetch_transcript_yt_dlp(video_id, cookies_path)
     if result:
         return result
+
+    # Tier 2: direct HTTP to youtubetranscript.com (different server, not blocked by YouTube CDN)
+    result = _fetch_youtubetranscript_direct(video_id)
+    if result:
+        return result
+
+    # Tier 3: youtube_transcript_api with pyopenssl TLS fallback
+    if _try_pyopenssl():
+        result = _fetch_youtubetranscript_direct(video_id)
+        if result:
+            return result
 
     from youtube_transcript_api import YouTubeTranscriptApi
     try:
