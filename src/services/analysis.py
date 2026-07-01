@@ -8,7 +8,7 @@ from typing import Callable, Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 
-from src.config import (
+from src.settings import (
     LINES_PER_CHUNK,
     CHUNK_OVERLAP,
     MIN_DELAY_SEC,
@@ -138,7 +138,7 @@ def _call_with_retry(chain, payload: dict, chunk_idx: int, total: int, log_fn: L
                 if server_wait:
                     wait = int(server_wait)
                     if log_fn:
-                        log_fn(f"Server suggests retry in {server_wait:.0f}s — waiting...")
+                        log_fn(f"Server suggests retry in {server_wait:.0f}s \u2014 waiting...")
                     time.sleep(wait)
                 continue
             raise
@@ -161,7 +161,7 @@ def _deduplicate_clips(clips: list[ClipSuggestion], min_dur: int, max_dur: int, 
         e = float(clip.end_time)
         dur = e - s
         if dur < min_dur or dur > max_dur:
-            log(f"  Rejected: '{clip.title[:40]}' — duration {dur:.0f}s outside [{min_dur}–{max_dur}s]")
+            log(f"  Rejected: '{clip.title[:40]}' \u2014 duration {dur:.0f}s outside [{min_dur}\u2013{max_dur}s]")
             continue
         overlap = False
         for kept in unique:
@@ -202,7 +202,7 @@ def _run_analysis(
             idx, total, log_fn,
         )
         clips = _parse_clips_from_response(content)
-        log(f"Chunk {idx}/{total} → {len(clips)} clips found")
+        log(f"Chunk {idx}/{total} \u2192 {len(clips)} clips found")
         all_clips.extend(clips)
 
         if idx < total:
@@ -226,7 +226,7 @@ def _call_with_key_rotation(
     last_err = None
     for ki, key in enumerate(api_keys):
         if ki > 0:
-            log(f"Rate limited on key #{ki} — switching to key #{ki + 1}...")
+            log(f"Rate limited on key #{ki} \u2014 switching to key #{ki + 1}...")
         chain = _build_chain(key, custom_context)
         try:
             return _call_with_retry(chain, payload, chunk_idx, total, log_fn)
@@ -260,7 +260,7 @@ def analyze_transcript(
     lines = transcript_text.strip().split("\n")
     total_lines = len(lines)
     log(f"Transcript: {total_lines} lines, ~{len(transcript_text.split())} words")
-    log(f"Using Groq (LLaMA 3.3 70B) — {len(groq_keys)} key(s) available")
+    log(f"Using Groq (LLaMA 3.3 70B) \u2014 {len(groq_keys)} key(s) available")
 
     all_clips = _run_analysis(groq_keys, lines, min_dur, max_dur, custom_context, log_fn)
 

@@ -6,7 +6,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Callable, Optional
 
-from src.config import PIPELINE_STEPS
+from src.settings import PIPELINE_STEPS
 from src.services.transcript import (
     extract_video_id,
     fetch_transcript,
@@ -93,7 +93,7 @@ def run_pipeline(
 
         _current_step = "analysis"
         step("analysis", "active")
-        log("Building transcript text for analysis…")
+        log("Building transcript text for analysis\u2026")
         txt = build_transcript_text(transcript)
         word_count = len(txt.split())
         log(f"Transcript compressed to {word_count:,} words")
@@ -110,11 +110,11 @@ def run_pipeline(
 
         if not clips:
             raise PipelineError(
-                f"No clips found between {analysis_cfg.min_dur}–{analysis_cfg.max_dur}s. "
+                f"No clips found between {analysis_cfg.min_dur}\u2013{analysis_cfg.max_dur}s. "
                 "Try widening the duration range."
             )
 
-        log(f"Analysis complete — {len(clips)} clips selected")
+        log(f"Analysis complete \u2014 {len(clips)} clips selected")
         step("analysis", "done")
 
         generated: dict[int, bytes] = {}
@@ -126,7 +126,7 @@ def run_pipeline(
         if video_url:
             _current_step = "download"
             step("download", "active")
-            log("Starting video download…")
+            log("Starting video download\u2026")
             expected = os.path.join(wdir, "source.mp4")
 
             if os.path.exists(video_url):
@@ -136,7 +136,7 @@ def run_pipeline(
                 download_video(video_url, expected, log_fn=log, cookies_path=cookie_path)
                 src_video = find_downloaded_file(wdir, expected)
                 size_mb = os.path.getsize(src_video) / (1024 * 1024)
-                log(f"Download complete — {size_mb:.0f} MB saved")
+                log(f"Download complete \u2014 {size_mb:.0f} MB saved")
 
             step("download", "done")
 
@@ -187,20 +187,20 @@ def run_pipeline(
 
             succeeded = len(generated)
             failed = n - succeeded
-            log(f"Cutting done — {succeeded}/{n} clips succeeded" + (f", {failed} failed" if failed else ""))
+            log(f"Cutting done \u2014 {succeeded}/{n} clips succeeded" + (f", {failed} failed" if failed else ""))
 
             step("cutting", "done")
 
             if clips and not generated:
-                log("WARNING: All clips failed during cutting — check FFmpeg installation")
+                log("WARNING: All clips failed during cutting \u2014 check FFmpeg installation")
         else:
-            log("No video URL provided — skipping download and cutting")
+            log("No video URL provided \u2014 skipping download and cutting")
             step("download", "done")
             step("cutting", "done")
 
         has_clips_bool = bool(generated) if video_url else True
         step("done", "done" if has_clips_bool else "failed")
-        log(f"Job complete — {len(generated)} clips ready" if has_clips_bool else "Job failed — no clips were generated")
+        log(f"Job complete \u2014 {len(generated)} clips ready" if has_clips_bool else "Job failed \u2014 no clips were generated")
 
         return JobResult(
             url=url,
@@ -229,4 +229,3 @@ def run_pipeline(
         except Exception:
             pass
         shutil.rmtree(wdir, ignore_errors=True)
-

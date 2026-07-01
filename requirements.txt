@@ -1,23 +1,22 @@
-# Video → Shorts app requirements
+# Video \u2192 Shorts app requirements
 # Install with: pip install -r requirements.txt
 
-# ── Core UI ──
+# \u2500\u2500 Core UI \u2500\u2500
 streamlit>=1.40.0
 
-# ── AI / LLM ──
+# \u2500\u2500 AI / LLM \u2500\u2500
 langchain>=0.3.0
 langchain-groq>=0.2.0
 numpy
 
-# ── YouTube / Video ──
+# \u2500\u2500 YouTube / Video \u2500\u2500
 youtube-transcript-api>=0.6.2
 yt-dlp>=2024.05.01
 webvtt-py>=0.5.1
 
-# ── Computer Vision ──
+# \u2500\u2500 Computer Vision \u2500\u2500
 mediapipe>=0.10.0
 opencv-python-headless>=4.8.0
 
-# ── Data / Config ──
+# \u2500\u2500 Data / Config \u2500\u2500
 pydantic>=2.0.0
-python-dotenv>=1.0.0

@@ -5,7 +5,7 @@ from typing import Optional
 
 import streamlit as st
 
-from src.config import resolve_api_keys
+from src.env import resolve_api_keys
 from src.services.video import check_ffmpeg
 from src.types import AnalysisConfig, SourceType
 

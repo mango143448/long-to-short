@@ -4,128 +4,187 @@ from typing import Optional
 
 import streamlit as st
 
-from src.config import PIPELINE_STEPS, STEP_LABELS
+from src.settings import PIPELINE_STEPS, STEP_LABELS
 from src.services.transcript import extract_video_id
 from src.types import JobResult, StepState
 
-_CLIP_ICONS = {"queued": "⬜", "active": "⟳", "done": "✅", "failed": "❌"}
+_STAGE_ICONS = {
+    "transcript": "\U0001f3a4",
+    "analysis": "\U0001f50d",
+    "download": "\U0001f4e5",
+    "cutting": "\u2702\ufe0f",
+    "done": "\u2705",
+}
+_STAGE_ORDER = ["transcript", "analysis", "download", "cutting", "done"]
 
 
-def _parse_progress(logs: list[str]) -> tuple[Optional[tuple[int, int]], Optional[tuple[int, int]]]:
-    chunk_progress: Optional[tuple[int, int]] = None
-    clip_progress: Optional[tuple[int, int]] = None
+def _state_cls(state: str) -> str:
+    mapping = {
+        "queued": "step-queued",
+        "active": "step-active",
+        "done": "step-done",
+        "failed": "step-failed",
+    }
+    return mapping.get(state, "step-queued")
+
+
+def _step_state(steps: dict, step_name: str) -> str:
+    return steps.get(step_name, "queued") if steps else "queued"
+
+
+def _step_label(step: str) -> str:
+    return STEP_LABELS.get(step, step.title())
+
+
+def _vid_badge(url: str) -> str:
+    vid = extract_video_id(url) if url != "__manual__" else ""
+    if not vid and url != "__manual__":
+        return f"<span class='job-badge failed'>NO ID</span>"
+    if url == "__manual__":
+        return '<span class="job-badge done">\U0001f4c4 Transcript</span>'
+    return f'<span class="job-badge done">{vid}</span>'
+
+
+def _count_clips_found(logs: list[str]) -> int:
+    count = 0
     for line in logs:
-        m = re.search(r"chunk\s*(\d+)\s*/\s*(\d+)", line, re.IGNORECASE)
+        m = re.search(r"(\d+)\s*clips?\s+found", line, re.IGNORECASE)
         if m:
-            chunk_progress = (int(m.group(1)), int(m.group(2)))
-        m = re.search(r"[Cc]lip\s*(\d+)\s*/\s*(\d+)", line)
-        if m:
-            clip_progress = (int(m.group(1)), int(m.group(2)))
-    return chunk_progress, clip_progress
-
-
-def _get_clip_statuses(logs: list[str], total: int) -> list[str]:
-    statuses: list[str] = ["queued"] * total
-    for line in logs:
-        m = re.search(r"[Cc]lip\s*(\d+)\s*/\s*(\d+)\s*done", line)
-        if m:
-            idx = int(m.group(1)) - 1
-            if 0 <= idx < total:
-                statuses[idx] = "done"
-        m = re.search(r"[Cc]lip\s*(\d+)\s*/\s*(\d+)\s*failed", line)
-        if m:
-            idx = int(m.group(1)) - 1
-            if 0 <= idx < total:
-                statuses[idx] = "failed"
-    for line in logs:
-        m = re.search(r"[Cc]lip\s*(\d+)\s*/\s*(\d+)", line)
-        if m:
-            last = int(m.group(1))
-            idx = last - 1
-            if 0 <= idx < total and statuses[idx] == "queued":
-                statuses[idx] = "active"
-    return statuses
+            count += int(m.group(1))
+    return count
 
 
 def _count_total_clips_found(logs: list[str]) -> int:
     total = 0
     for line in logs:
-        m = re.search(r"Chunk\s+\d+/\d+\s*[→➡]\s*(\d+)\s+clips?\s+found", line, re.IGNORECASE)
+        m = re.search(r"Analysis complete\s*[^\d]*(\d+)\s*clips?", line, re.IGNORECASE)
         if m:
             total += int(m.group(1))
     return total
 
 
-def _parse_download_pct(logs: list[str]) -> Optional[float]:
+def _chunk_progress(logs: list[str]) -> Optional[tuple[int, int]]:
     for line in reversed(logs):
-        m = re.search(r"(\d+\.?\d*)%", line)
+        m = re.search(r"Analyzing chunk (\d+)/(\d+)", line)
         if m:
-            return float(m.group(1))
+            return int(m.group(1)), int(m.group(2))
     return None
 
 
-def _parse_download_speed(logs: list[str]) -> str:
+def _stage_progress(logs: list[str]) -> Optional[tuple[int, int]]:
     for line in reversed(logs):
-        m = re.search(r"at\s+([\d.]+)\s*(\w+/s)", line)
+        m = re.search(r"Clip (\d+)/(\d+)", line)
         if m:
-            return f"{m.group(1)} {m.group(2)}"
-    return ""
+            return int(m.group(1)), int(m.group(2))
+    return None
 
 
-def _render_step_bar(steps: dict[str, StepState]):
-    html = '<div class="step-bar">'
-    for i, name in enumerate(PIPELINE_STEPS):
-        s = steps.get(name, StepState.queued)
-        val = s.value if hasattr(s, "value") else str(s)
-        icon = {"done": "✓", "active": "●", "failed": "✗", "queued": "○"}.get(val, "○")
-        cls = f"step-dot step-{val}"
-        html += f'<span class="{cls}">{icon}</span><span class="step-label step-label-{val}">{STEP_LABELS[name]}</span>'
-        if i < len(PIPELINE_STEPS) - 1:
-            html += f'<span class="step-connector step-connector-{val}"></span>'
-    html += "</div>"
-    return html
+def _format_timer(start: float) -> str:
+    elapsed = time_module.time() - start
+    mins, secs = divmod(int(elapsed), 60)
+    return f"{mins:02d}:{secs:02d}"
 
 
-def _render_stage_card(stage: str, logs: list[str], result: Optional[JobResult], clip_progress: Optional[tuple[int, int]], chunk_progress: Optional[tuple[int, int]]):
-    if stage == "done":
-        if result and result.success:
-            return (
-                '<div class="stage-card stage-done">'
-                '  <div class="stage-icon">🎉</div>'
-                '  <div class="stage-body">'
-                f'    <div class="stage-title">Complete — {len(result.clips)} clips ready</div>'
-                f'    <div class="stage-sub">{len(result.generated)} clips downloaded, {len(result.clips)} total found</div>'
-                '  </div>'
-                '</div>'
+def _render_stage_card(stage: str, state: str, icon: str, title: str, sub: str, status: str):
+    state_cls = _state_cls(state)
+    active = state == "active"
+    done = state == "done"
+
+    if active:
+        status_html = f'<div class="stage-status"><span class="live-dot"></span> {status}</div>'
+    elif done:
+        status_html = f'<div class="stage-status" style="color:#3d9970;">\u2705 {status}</div>'
+    else:
+        status_html = ""
+
+    st.markdown(
+        f'<div class="stage-card stage-{stage}">'
+        f'  <div class="stage-icon">{icon}</div>'
+        f'  <div class="stage-body">'
+        f'    <div class="stage-title">{title}</div>'
+        f'    <div class="stage-sub">{sub}</div>'
+        f'    {status_html}'
+        f'  </div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_dashboard(active_url: Optional[str] = None):
+    if active_url:
+        _render_active(active_url)
+    else:
+        _render_summary()
+
+
+def _render_active(url: str):
+    steps: dict = st.session_state.get("steps", {}).get(url, {})
+    logs: list = st.session_state.get("logs", {}).get(url, [])
+    started = st.session_state.get(f"_started_{url}", time_module.time())
+    timer = _format_timer(started)
+
+    active_step = None
+    for s in PIPELINE_STEPS:
+        if steps.get(s) == "active":
+            active_step = s
+            break
+    if not active_step:
+        for s in reversed(PIPELINE_STEPS):
+            if steps.get(s) == "done":
+                active_step = s
+                break
+
+    job_status = "active" if active_step else "queued"
+
+    st.markdown(
+        f'<div class="card card-{job_status}">'
+        f'  <div class="card-top">'
+        f'    <span class="card-id">{_vid_badge(url)}</span>'
+        f'    <span class="timer">{timer}</span>'
+        f'  </div>'
+        f'  <div class="step-bar">',
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns([1] * len(PIPELINE_STEPS))
+    for i, step in enumerate(PIPELINE_STEPS):
+        state = _state_cls(_step_state(steps, step))
+        label = _step_label(step)
+        icon = _STAGE_ICONS.get(step, "")
+        with cols[i]:
+            st.markdown(
+                f'<div class="step-dot {state}">{icon}</div>'
+                f'<div class="step-label {state}">{label}</div>',
+                unsafe_allow_html=True,
             )
-        else:
-            err = (result.error[:200] if result and result.error else "Unknown error")
-            return (
-                '<div class="stage-card stage-failed">'
-                '  <div class="stage-icon">❌</div>'
-                '  <div class="stage-body">'
-                f'    <div class="stage-title">Pipeline Failed</div>'
-                f'    <div class="stage-sub">{err}</div>'
-                '  </div>'
-                '</div>'
-            )
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    stage = active_step or PIPELINE_STEPS[-1]
+    sub = f"Step {PIPELINE_STEPS.index(stage) + 1} of {len(PIPELINE_STEPS)}"
+    status = "Processing\u2026"
+    icon = _STAGE_ICONS.get(stage, "")
+
+    chunk_progress = _chunk_progress(logs)
+    clip_progress = _stage_progress(logs)
 
     if stage == "transcript":
-        seg_count = 0
+        seg_info = ""
         for line in logs:
             m = re.search(r"Got (\d+) segments", line)
             if m:
-                seg_count = int(m.group(1))
-        seg_info = f'<div class="stage-metric"><span class="metric-icon">📊</span> {seg_count} segments</div>' if seg_count else ''
-        return (
-            '<div class="stage-card stage-transcript">'
-            '  <div class="stage-icon">📝</div>'
-            '  <div class="stage-body">'
-            '    <div class="stage-title">Fetching transcript</div>'
-            f'    <div class="stage-status"><span class="live-dot"></span> Extracting captions from video…</div>'
+                seg_info = f'<div class="stage-metric"><span class="metric-icon">\U0001f4ac</span> {m.group(1)} captions found</div>'
+        st.markdown(
+            f'<div class="stage-card stage-transcript">'
+            f'  <div class="stage-icon">{icon}</div>'
+            f'  <div class="stage-body">'
+            f'    <div class="stage-title">Transcript</div>'
+            f'    <div class="stage-sub">{sub}</div>'
+            f'    <div class="stage-status"><span class="live-dot"></span> Extracting captions from video\u2026</div>'
             f'    {seg_info}'
-            '  </div>'
-            '</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
     if stage == "analysis":
@@ -137,159 +196,141 @@ def _render_stage_card(stage: str, logs: list[str], result: Optional[JobResult],
             cur, total = chunk_progress
             pct = min(cur / max(total, 1), 1.0)
             bar = '<div class="prog"><div class="prog-fill" style="width:{:.0f}%"></div></div>'.format(pct * 100)
-            label = f'<div class="stage-metric"><span class="metric-icon">🔍</span> Analyzing chunk {cur} of {total}</div>'
+            label = f'<div class="stage-metric"><span class="metric-icon">\U0001f50d</span> Analyzing chunk {cur} of {total}</div>'
         else:
             bar = '<div class="prog"><div class="prog-fill prog-indeterminate"></div></div>'
-            label = '<div class="stage-status"><span class="live-dot"></span> Processing transcript…</div>'
+            label = '<div class="stage-status"><span class="live-dot"></span> Processing transcript\u2026</div>'
 
-        clips_info = f'<div class="stage-metric"><span class="metric-icon">🎬</span> {clips_found} clips found</div>' if clips_found else ''
-
-        return (
-            '<div class="stage-card stage-analysis">'
-            '  <div class="stage-icon">🧠</div>'
-            '  <div class="stage-body">'
+        st.markdown(
+            f'<div class="stage-card stage-analysis">'
+            f'  <div class="stage-icon">{icon}</div>'
+            f'  <div class="stage-body">'
             f'    <div class="stage-title">AI Analysis {provider_badge}</div>'
+            f'    <div class="stage-sub">{sub}</div>'
             f'    {label}'
-            f'    {clips_info}'
             f'    {bar}'
-            '  </div>'
-            '</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
     if stage == "download":
-        pct = _parse_download_pct(logs)
-        speed = _parse_download_speed(logs)
-        pct_str = f"{pct:.0f}%" if pct is not None else ""
-        speed_str = f" · {speed}" if speed else ""
-
-        if pct is not None:
-            bar = '<div class="prog"><div class="prog-fill" style="width:{:.0f}%"></div></div>'.format(pct)
-        else:
-            bar = '<div class="prog"><div class="prog-fill prog-indeterminate"></div></div>'
-
-        return (
-            '<div class="stage-card stage-download">'
-            '  <div class="stage-icon">⬇️</div>'
-            '  <div class="stage-body">'
-            f'    <div class="stage-title">Downloading video</div>'
-            f'    <div class="stage-status"><span class="live-dot"></span> {pct_str}{speed_str}</div>'
-            f'    {bar}'
-            '  </div>'
-            '</div>'
+        st.markdown(
+            f'<div class="stage-card stage-download">'
+            f'  <div class="stage-icon">{icon}</div>'
+            f'  <div class="stage-body">'
+            f'    <div class="stage-title">Download Video</div>'
+            f'    <div class="stage-sub">{sub}</div>'
+            f'    <div class="stage-status"><span class="live-dot"></span> Downloading source video\u2026</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
     if stage == "cutting":
-        n = clip_progress[1] if clip_progress else 0
-        statuses = _get_clip_statuses(logs, n) if n > 0 else []
-        clip_html = ""
-        for i, clip in enumerate(statuses):
-            icon = _CLIP_ICONS.get(clip, "⬜")
-            clip_html += f'<span class="clip-queue-item clip-queue-{clip}" title="Clip {i+1}: {clip}">{icon}</span>'
-
         if clip_progress:
             cur, total = clip_progress
             pct = min(cur / max(total, 1), 1.0)
             bar = '<div class="prog"><div class="prog-fill" style="width:{:.0f}%"></div></div>'.format(pct * 100)
-            label = f'<div class="stage-metric"><span class="metric-icon">✂️</span> Clip {cur} of {total}</div>'
+            status = f'Cutting clip {cur} of {total}'
         else:
             bar = '<div class="prog"><div class="prog-fill prog-indeterminate"></div></div>'
-            label = '<div class="stage-status"><span class="live-dot"></span> Preparing clips…</div>'
+            status = 'Starting cuts\u2026'
 
-        return (
-            '<div class="stage-card stage-cutting">'
-            '  <div class="stage-icon">✂️</div>'
-            '  <div class="stage-body">'
-            '    <div class="stage-title">Cutting clips</div>'
-            f'    {label}'
-            f'    <div class="clip-queue">{clip_html}</div>'
+        st.markdown(
+            f'<div class="stage-card stage-cutting">'
+            f'  <div class="stage-icon">{icon}</div>'
+            f'  <div class="stage-body">'
+            f'    <div class="stage-title">Cutting Clips</div>'
+            f'    <div class="stage-sub">{sub}</div>'
+            f'    <div class="stage-status"><span class="live-dot"></span> {status}</div>'
             f'    {bar}'
-            '  </div>'
-            '</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
-    return ""
+    if stage == "done":
+        st.markdown(
+            f'<div class="stage-card stage-done">'
+            f'  <div class="stage-icon">{icon}</div>'
+            f'  <div class="stage-body">'
+            f'    <div class="stage-title">Complete</div>'
+            f'    <div class="stage-sub">{sub}</div>'
+            f'    <div class="stage-status" style="color:#3d9970;">\u2705 Ready</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    if url in st.session_state.get("results", {}):
+        result = st.session_state.results[url]
+        if not result.success:
+            st.markdown(
+                f'<div class="stage-card stage-failed">'
+                f'  <div class="stage-icon">\u274c</div>'
+                f'  <div class="stage-body">'
+                f'    <div class="stage-title">Failed</div>'
+                f'    <div class="stage-sub">{result.error[:200]}</div>'
+                f'  </div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_dashboard(active_url: Optional[str] = None):
-    queue = st.session_state.get("batch_queue", [])
-    if not queue:
+def _render_summary():
+    results = st.session_state.get("results", {})
+    steps = st.session_state.get("steps", {})
+    logs = st.session_state.get("logs", {})
+    done_count = sum(1 for r in results.values() if isinstance(r, JobResult) and r.success)
+    fail_count = sum(1 for r in results.values() if isinstance(r, JobResult) and not r.success)
+
+    if not results and not steps:
         return
 
-    total = len(queue)
-    steps_dict: dict[str, dict[str, StepState]] = st.session_state.get("steps", {})
-    results_dict: dict[str, JobResult] = st.session_state.get("results", {})
-    logs_dict: dict[str, list[str]] = st.session_state.get("logs", {})
-
-    done_count = sum(
-        1 for u in queue
-        if steps_dict.get(u, {}).get("done") == StepState.done
-    )
-
     st.markdown(
-        f'<div class="queue-header">Queue: {done_count}/{total} complete</div>',
+        f'<div class="queue-header">Batch Summary \u2014 {done_count} done, {fail_count} failed</div>',
         unsafe_allow_html=True,
     )
 
-    for url in queue:
-        vid_id = extract_video_id(url) if url != "__manual__" else "Manual"
-        steps = steps_dict.get(url, {})
-        logs = logs_dict.get(url, [])
-        result = results_dict.get(url)
-        is_active = url == active_url
+    for url, result in results.items():
+        if not isinstance(result, JobResult):
+            continue
+        url_steps = steps.get(url, {})
+        url_logs = logs.get(url, [])
+        state = "done" if result.success else "failed"
 
-        if result:
-            card_state = "done" if result.success else "failed"
-        elif is_active:
-            card_state = "active"
-        else:
-            card_state = "queued"
+        vid_id = result.vid_id or extract_video_id(url) or "Manual"
+        st.markdown(
+            f'<div class="job-card {state}">'
+            f'  <div class="job-top">'
+            f'    <span class="job-id">{vid_id}</span>'
+            f'    <span class="job-badge {state}">{"\u2705 Done" if result.success else "\u274c Failed"}</span>'
+            f'  </div>'
+            f'  <div class="step-trail">',
+            unsafe_allow_html=True,
+        )
 
-        current_step = "queued"
-        for sn in PIPELINE_STEPS:
-            ss = steps.get(sn, StepState.queued)
-            sv = ss.value if hasattr(ss, "value") else str(ss)
-            if sv == "active":
-                current_step = sn
-                break
+        for step in PIPELINE_STEPS:
+            s = _step_state(url_steps, step)
+            label = _step_label(step)
+            state_cls = _state_cls(s)
+            dot = s == "done" and "\u2713" or s == "failed" and "\u2717" or "\u2022"
+            st.markdown(
+                f'<span class="step-label {state_cls}">'
+                f'  <span class="step-dot {state_cls}">{dot}</span> {label}'
+                f'</span>',
+                unsafe_allow_html=True,
+            )
 
-        chunk_progress, clip_progress = _parse_progress(logs)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        timer_html = ""
-        if is_active:
-            started = st.session_state.get(f"_started_{url}")
-            if started:
-                elapsed = int(time_module.time() - started)
-                timer_html = f'<div class="timer">⏱ {elapsed // 60:02d}:{elapsed % 60:02d}</div>'
+        if not result.success and result.error:
+            st.markdown(
+                f'<div class="card-foot" style="color:#cc4444;">{result.error[:200]}</div>',
+                unsafe_allow_html=True,
+            )
 
-        card = f'<div class="card card-{card_state}">'
-        card += f'<div class="card-top"><span class="card-id">{vid_id}</span><span class="card-badge card-badge-{card_state}">{card_state.title()}</span></div>'
-        card += _render_step_bar(steps)
-
-        if is_active:
-            card += _render_stage_card(current_step, logs, result, clip_progress, chunk_progress)
-
-        card += timer_html
-
-        if result:
-            summary = f'{len(result.generated)} clips · {len(result.clips)} found'
-            if result.error:
-                summary += f' · Error: {result.error[:80]}'
-            card += f'<div class="card-foot">{summary}</div>'
-            if logs:
-                card += (
-                    '<details class="log-details" style="margin-top:6px">'
-                    f'<summary class="log-summary">📋 Processing Log ({len(logs)} entries)</summary>'
-                )
-                log_entries = ""
-                for line in logs[-30:]:
-                    css = "log-line"
-                    if "error" in line.lower() or "failed" in line.lower() or "✗" in line:
-                        css += " log-err"
-                    elif "complete" in line.lower() or "✓" in line or "done" in line.lower():
-                        css += " log-ok"
-                    log_entries += f'<div class="{css}">{line}</div>'
-                card += f'<div class="log-box">{log_entries}</div>'
-                card += '</details>'
-
-        card += "</div>"
-        st.markdown(card, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)

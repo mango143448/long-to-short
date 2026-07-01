@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from src.pipeline.base import run_pipeline
-from src.state.manager import live_append_log, live_set_result, live_set_step
+from src.session import live_append_log, live_set_result, live_set_step
 from src.types import AnalysisConfig, JobResult
 
 

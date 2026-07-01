@@ -3,10 +3,8 @@ from typing import Optional
 
 import streamlit as st
 
-from src.config import PROJECT_ROOT
+from src.settings import PROJECT_ROOT
 from src.types import JobResult, JobStep, StepState
-
-# ── Thread-safe live state (written by background thread, read by main thread) ──
 
 _live_lock = threading.Lock()
 _live_logs: dict[str, list[str]] = {}

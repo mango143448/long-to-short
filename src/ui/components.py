@@ -162,8 +162,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .req-block { background: #111; border: 1px solid #1e1e1e; border-radius: 8px; padding: 14px 18px; margin-top: 16px; font-size: 0.82rem; color: #555; }
 .req-block code { background: #1a1a1a; color: #aaa; padding: 2px 6px; border-radius: 4px; font-size: 0.82rem; }
 
-/* ── Queue header ──────────────────────────────────────── */
-
 .queue-header {
     font-family: 'Space Grotesk', sans-serif;
     font-size: 1rem;
@@ -172,8 +170,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     letter-spacing: 0.04em;
     margin-bottom: 10px;
 }
-
-/* ── Card ──────────────────────────────────────────────── */
 
 .card {
     background: #0f0f0f;
@@ -207,8 +203,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .card-foot {
     font-size: 0.72rem; color: #555; margin-top: 8px;
 }
-
-/* ── Step Bar ──────────────────────────────────────────── */
 
 .step-bar {
     display: flex; align-items: center; gap: 4px;
@@ -246,8 +240,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .step-connector.step-active { background: #4a9eff; }
 .step-connector.step-queued { background: #1a1a1a; }
 .step-connector.step-failed { background: #cc4444; }
-
-/* ── Stage Card ────────────────────────────────────────── */
 
 .stage-card {
     display: flex; gap: 14px;
@@ -367,8 +359,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Progress bar ─────────────────────────────────────── */
-
 .prog {
     width: 100%; height: 5px;
     background: #1a1a1a; border-radius: 3px; overflow: hidden;
@@ -387,8 +377,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     100% { transform: translateX(400%); }
 }
 
-/* ── Clip queue ───────────────────────────────────────── */
-
 .clip-queue {
     display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0;
 }
@@ -406,15 +394,11 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .clip-queue-failed { opacity: 0.5; filter: grayscale(0.5); }
 .clip-queue-queued { opacity: 0.3; filter: grayscale(0.7); }
 
-/* ── Timer ────────────────────────────────────────────── */
-
 .timer {
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.82rem; color: #555;
     font-variant-numeric: tabular-nums; margin: 4px 0;
 }
-
-/* ── Log details (post-completion only) ────────────────── */
 
 .log-details { margin-top: 6px; }
 .log-summary {
