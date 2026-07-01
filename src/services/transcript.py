@@ -137,6 +137,8 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
         "outtmpl": out_template,
         "socket_timeout": 30,
         "extract_flat": False,
+        "extractor_retries": 3,
+        "file_access_retries": 3,
     }
     if cookies_path:
         ydl_opts["cookiefile"] = cookies_path
@@ -157,12 +159,67 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
         return []
 
     except yt_dlp.utils.DownloadError as e:
-        print(f"[transcript] yt-dlp download error for {video_id}: {e}", file=sys.stderr)
+        err_str = str(e)
+        print(f"[transcript] yt-dlp error for {video_id}: {err_str[:200]}", file=sys.stderr)
+
+        if "SSL" in err_str or "UNEXPECTED_EOF" in err_str:
+            return _fetch_transcript_yt_dlp_fallback(video_id, cookies_path)
+
         return []
     except Exception as e:
         print(f"[transcript] yt-dlp unexpected error for {video_id}: {e}", file=sys.stderr)
         return []
     finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _fetch_transcript_yt_dlp_fallback(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:
+    """Fallback that patches SSL context for HF Spaces environments."""
+    import ssl
+
+    import yt_dlp
+
+    original_context = ssl._create_default_https_context
+    ssl._create_default_https_context = ssl._create_unverified_context
+
+    tmp_dir = tempfile.mkdtemp(prefix="subs_")
+    out_template = os.path.join(tmp_dir, "%(id)s.%(ext)s")
+
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitlesformat": "vtt",
+        "subtitleslangs": ["en"],
+        "skip_download": True,
+        "outtmpl": out_template,
+        "socket_timeout": 30,
+        "extract_flat": False,
+        "extractor_retries": 3,
+        "file_access_retries": 3,
+    }
+    if cookies_path:
+        ydl_opts["cookiefile"] = cookies_path
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        vtt_files = sorted(Path(tmp_dir).glob("*.vtt"))
+        if vtt_files:
+            vtt_content = vtt_files[0].read_text(encoding="utf-8")
+            segments = _parse_vtt_content(vtt_content)
+            if segments:
+                return segments
+        return []
+    except Exception as e:
+        print(f"[transcript] fallback also failed for {video_id}: {e}", file=sys.stderr)
+        return []
+    finally:
+        ssl._create_default_https_context = original_context
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 

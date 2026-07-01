@@ -11,8 +11,13 @@ numpy
 
 # \u2500\u2500 YouTube / Video \u2500\u2500
 youtube-transcript-api>=0.6.2
-yt-dlp>=2024.05.01
+yt-dlp>=2025.01.01
 webvtt-py>=0.5.1
+
+# \u2500\u2500 SSL / Networking (HF Spaces needs up-to-date certs) \u2500\u2500
+certifi>=2024.12.0
+urllib3>=2.0.0
+requests>=2.31.0
 
 # \u2500\u2500 Computer Vision \u2500\u2500
 mediapipe>=0.10.0
