@@ -73,6 +73,14 @@ def download_video(url: str, out_path: str, log_fn: LogFn = None, cookies_path: 
         "progress_hooks": [Hook()],
         "socket_timeout": 30,
         "retries": 3,
+        "extractor_retries": 3,
+        "file_access_retries": 3,
+        "legacy_server_connect": True,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        },
     }
     if cookies_path:
         opts["cookiefile"] = cookies_path
