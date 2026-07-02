@@ -137,9 +137,12 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
         "outtmpl": out_template,
         "socket_timeout": 30,
         "extract_flat": False,
-        "extractor_retries": 3,
-        "file_access_retries": 3,
+        "extractor_retries": 5,
+        "file_access_retries": 5,
+        "fragment_retries": 5,
         "legacy_server_connect": True,
+        "source_address": "0.0.0.0",
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if cookies_path:
         ydl_opts["cookiefile"] = cookies_path

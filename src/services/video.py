@@ -65,17 +65,20 @@ def download_video(url: str, out_path: str, log_fn: LogFn = None, cookies_path: 
                 log("Download complete, merging streams…")
 
     opts = {
-        "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]/best",
+        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
         "outtmpl": out_path,
         "merge_output_format": "mp4",
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [Hook()],
         "socket_timeout": 30,
-        "retries": 3,
-        "extractor_retries": 3,
-        "file_access_retries": 3,
+        "retries": 5,
+        "extractor_retries": 5,
+        "file_access_retries": 5,
+        "fragment_retries": 5,
         "legacy_server_connect": True,
+        "source_address": "0.0.0.0",
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
