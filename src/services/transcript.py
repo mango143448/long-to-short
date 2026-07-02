@@ -132,17 +132,10 @@ def fetch_transcript_yt_dlp(video_id: str, cookies_path: Optional[str] = None) -
         "writesubtitles": True,
         "writeautomaticsub": True,
         "subtitlesformat": "vtt",
-        "subtitleslangs": ["en"],
+        "subtitleslangs": ["en", "en-US", "en-GB"],
         "skip_download": True,
         "outtmpl": out_template,
         "socket_timeout": 30,
-        "extract_flat": False,
-        "extractor_retries": 5,
-        "file_access_retries": 5,
-        "fragment_retries": 5,
-        "legacy_server_connect": True,
-        "source_address": "0.0.0.0",
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if cookies_path:
         ydl_opts["cookiefile"] = cookies_path
@@ -214,61 +207,43 @@ def _fetch_youtubetranscript_direct(video_id: str, lang: str = "en") -> list[Tra
     return []
 
 
-def _try_pyopenssl():
-    """Inject pyopenssl into urllib3 if available — uses system OpenSSL instead of Python's built-in SSL."""
-    try:
-        import urllib3.contrib.pyopenssl
-        urllib3.contrib.pyopenssl.inject_into_urllib3()
-        return True
-    except Exception:
-        return False
-
-
 def fetch_transcript(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:
     # Tier 1: youtube_transcript_api — most reliable, no download, works on server IPs
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
+        # New API (0.6.0+) — list_transcripts with find/fetch
         try:
-            transcript = transcript_list.find_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"])
-            fetched = transcript.fetch()
-            result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
-            if result:
-                print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (manual)", file=sys.stderr)
-                return result
-        except Exception:
-            pass
-
-        try:
-            transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"])
-            fetched = transcript.fetch()
-            result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
-            if result:
-                print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (auto)", file=sys.stderr)
-                return result
-        except Exception:
-            pass
-
-        try:
-            for t in transcript_list._manually_created_transcripts.values():
-                fetched = t.fetch()
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            for get_fn in [
+                lambda: transcript_list.find_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"]),
+                lambda: transcript_list.find_generated_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"]),
+            ]:
+                try:
+                    fetched = get_fn().fetch()
+                    result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
+                    if result:
+                        print(f"[transcript] Got {len(result)} segments via youtube-transcript-api", file=sys.stderr)
+                        return result
+                except Exception:
+                    continue
+        except AttributeError:
+            # Old API (pre-0.6.0) — get_transcript directly
+            try:
+                fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US", "en-GB"])
                 result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
                 if result:
-                    print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (manual {t.language_code})", file=sys.stderr)
+                    print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (legacy)", file=sys.stderr)
                     return result
-        except Exception:
-            pass
-
-        try:
-            for t in transcript_list._generated_transcripts.values():
-                fetched = t.fetch()
-                result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
-                if result:
-                    print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (auto {t.language_code})", file=sys.stderr)
-                    return result
-        except Exception:
-            pass
+            except Exception:
+                try:
+                    fetched = YouTubeTranscriptApi.get_transcript(video_id)
+                    result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
+                    if result:
+                        print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (legacy, any lang)", file=sys.stderr)
+                        return result
+                except Exception as e:
+                    print(f"[transcript] legacy get_transcript failed: {e}", file=sys.stderr)
 
     except Exception as e:
         print(f"[transcript] youtube-transcript-api failed for {video_id}: {e}", file=sys.stderr)
