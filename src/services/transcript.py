@@ -182,31 +182,35 @@ def _fetch_youtubetranscript_direct(video_id: str, lang: str = "en") -> list[Tra
     ]
 
     for url in urls:
-        for attempt in range(3):
-            try:
-                resp = requests.get(
-                    url,
-                    timeout=15,
-                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list) and data:
-                        segments = []
-                        for item in data:
-                            text = item.get("text", "").strip()
-                            start = float(item.get("start", 0))
-                            dur = float(item.get("dur", item.get("duration", 0)))
-                            if text:
-                                segments.append(TranscriptSegment(text=text, start=start, duration=max(0.1, dur)))
-                        if segments:
-                            return segments
-                return []
-            except requests.RequestException as e:
-                if attempt < 2:
-                    continue
-                print(f"[transcript] direct HTTP failed for {video_id}: {e}", file=sys.stderr)
-                return []
+        try:
+            resp = requests.get(
+                url,
+                timeout=15,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            )
+            if resp.status_code != 200:
+                continue
+            ct = resp.headers.get("content-type", "")
+            if "html" in ct:
+                print(f"[transcript] youtubetranscript.com returned HTML for {video_id}", file=sys.stderr)
+                continue
+            if not resp.text.strip():
+                continue
+            data = resp.json()
+            if isinstance(data, list) and data:
+                segments = []
+                for item in data:
+                    text = item.get("text", "").strip()
+                    start = float(item.get("start", 0))
+                    dur = float(item.get("dur", item.get("duration", 0)))
+                    if text:
+                        segments.append(TranscriptSegment(text=text, start=start, duration=max(0.1, dur)))
+                if segments:
+                    return segments
+        except Exception as e:
+            print(f"[transcript] direct HTTP failed for {video_id}: {e}", file=sys.stderr)
+            continue
+
     return []
 
 
@@ -221,39 +225,71 @@ def _try_pyopenssl():
 
 
 def fetch_transcript(video_id: str, cookies_path: Optional[str] = None) -> list[TranscriptSegment]:
-    # Tier 1: yt-dlp subtitle download (works locally and on non-blocked networks)
-    result = fetch_transcript_yt_dlp(video_id, cookies_path)
-    if result:
-        return result
-
-    # Tier 2: direct HTTP to youtubetranscript.com (different server, not blocked by YouTube CDN)
-    result = _fetch_youtubetranscript_direct(video_id)
-    if result:
-        return result
-
-    # Tier 3: youtube_transcript_api with pyopenssl TLS fallback
-    if _try_pyopenssl():
-        result = _fetch_youtubetranscript_direct(video_id)
-        if result:
-            return result
-
-    from youtube_transcript_api import YouTubeTranscriptApi
+    # Tier 1: youtube_transcript_api — most reliable, no download, works on server IPs
     try:
+        from youtube_transcript_api import YouTubeTranscriptApi
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+
         try:
             transcript = transcript_list.find_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"])
+            fetched = transcript.fetch()
+            result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
+            if result:
+                print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (manual)", file=sys.stderr)
+                return result
         except Exception:
-            try:
-                transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"])
-            except Exception:
-                raise ValueError("No English captions found via standard API")
-        fetched = transcript.fetch()
-        return [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
-    except Exception:
-        raise ValueError(
-            "No English captions found. "
-            "If the video has captions, try uploading a cookies.txt file in Advanced settings."
-        )
+            pass
+
+        try:
+            transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB", "en-CA", "en-AU"])
+            fetched = transcript.fetch()
+            result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
+            if result:
+                print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (auto)", file=sys.stderr)
+                return result
+        except Exception:
+            pass
+
+        try:
+            for t in transcript_list._manually_created_transcripts.values():
+                fetched = t.fetch()
+                result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
+                if result:
+                    print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (manual {t.language_code})", file=sys.stderr)
+                    return result
+        except Exception:
+            pass
+
+        try:
+            for t in transcript_list._generated_transcripts.values():
+                fetched = t.fetch()
+                result = [TranscriptSegment(text=item["text"], start=item["start"], duration=item["duration"]) for item in fetched]
+                if result:
+                    print(f"[transcript] Got {len(result)} segments via youtube-transcript-api (auto {t.language_code})", file=sys.stderr)
+                    return result
+        except Exception:
+            pass
+
+    except Exception as e:
+        print(f"[transcript] youtube-transcript-api failed for {video_id}: {e}", file=sys.stderr)
+
+    # Tier 2: youtubetranscript.com — different infrastructure
+    result = _fetch_youtubetranscript_direct(video_id)
+    if result:
+        print(f"[transcript] Got {len(result)} segments via youtubetranscript.com", file=sys.stderr)
+        return result
+
+    # Tier 3: yt-dlp — slowest, most likely to get 403'd on server
+    print(f"[transcript] Trying yt-dlp for {video_id}...", file=sys.stderr)
+    result = fetch_transcript_yt_dlp(video_id, cookies_path)
+    if result:
+        print(f"[transcript] Got {len(result)} segments via yt-dlp", file=sys.stderr)
+        return result
+
+    raise ValueError(
+        "No captions found. The video may not have captions enabled, "
+        "or all fetch methods were blocked. Try uploading a cookies.txt file in Advanced settings."
+    )
 
 
 def build_transcript_text(transcript: list[TranscriptSegment]) -> str:
