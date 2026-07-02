@@ -1,14 +1,3 @@
----
-title: Long Video → Shorts
-emoji: ✂️
-colorFrom: blue
-colorTo: indigo
-sdk: streamlit
-sdk_version: "1.40.0"
-app_file: app.py
-pinned: false
----
-
 # Video → Shorts Generator
 
 Turn any long YouTube video into punchy 9:16 short clips using Groq AI.
